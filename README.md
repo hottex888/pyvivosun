@@ -2,6 +2,8 @@
 
 Async Python library for the Vivosun GrowHub cloud API. Provides programmatic access to sensor data and device control for Vivosun grow tent equipment.
 
+Built on the reverse-engineering work by [lientry](https://github.com/lientry/homeassistant-vivosun-growhub), who figured out the authentication flow, API endpoints, MQTT shadow structure, and device control protocol. This library is a clean-room standalone rewrite with no Home Assistant dependencies.
+
 ## Supported Devices
 
 Tested with the following Vivosun devices (each connects independently to the cloud via WiFi):
