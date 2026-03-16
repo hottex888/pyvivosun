@@ -26,10 +26,42 @@ Or install from source:
 ```bash
 git clone https://github.com/hottex888/pyvivosun.git
 cd pyvivosun
+pip install -r requirements.txt
+pip install -e .
+```
+
+For development (tests, linting, type checking):
+
+```bash
 pip install -e ".[dev]"
 ```
 
 Requires Python 3.11+. Dependencies: `aiohttp`, `websockets`.
+
+## Testing with Your Devices
+
+The repo includes live test scripts you can run against your own Vivosun account. Create a `credentials.env` file (gitignored) in the project root:
+
+```
+VIVOSUN_EMAIL=your@email.com
+VIVOSUN_PASSWORD=yourpassword
+```
+
+Then run:
+
+```bash
+# REST: login, list devices, fetch sensor data
+python test_live.py
+
+# MQTT: connect, subscribe to shadows, stream live updates
+python test_mqtt_live.py
+
+# MQTT: debug per-topic subscription
+python test_mqtt_debug.py
+
+# REST: test different time ranges and aggregation levels
+python test_pointlog_ranges.py
+```
 
 ## Quick Start
 
