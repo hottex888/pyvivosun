@@ -18,22 +18,10 @@ Tested with the following Vivosun devices (each connects independently to the cl
 ## Installation
 
 ```bash
-pip install pyvivosun
-```
-
-Or install from source:
-
-```bash
 git clone https://github.com/hottex888/pyvivosun.git
 cd pyvivosun
 pip install -r requirements.txt
 pip install -e .
-```
-
-For development (tests, linting, type checking):
-
-```bash
-pip install -e ".[dev]"
 ```
 
 Requires Python 3.11+. Dependencies: `aiohttp`, `websockets`.
