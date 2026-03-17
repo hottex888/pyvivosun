@@ -17,7 +17,14 @@ from .models.event import EventType, VivosunEvent
 from .models.state import DeviceState, SensorData, parse_shadow_to_state
 from .mqtt import MqttClient
 from .rest import RestClient
-from .util import clamp_fan_level, clamp_light_level, is_sentinel, scale_value
+from .util import (
+    clamp_fan_level,
+    clamp_heater_level,
+    clamp_humidifier_level,
+    clamp_light_level,
+    is_sentinel,
+    scale_value,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -165,7 +172,12 @@ class VivosunClient:
         return self._states.get(device_id)
 
     async def get_sensor_data(self, device_id: str) -> SensorData | None:
-        """Fetch fresh sensor data via REST (poll)."""
+        """Fetch fresh sensor data via REST (poll).
+
+        Extracts all available sensor fields from the latest point log entry.
+        GrowHub uses inTemp/inHumi/inVpd for probe readings;
+        humidifier/heater use pTemp/pHumi/pVpd.
+        """
         device = self._devices.get(device_id)
         if device is None:
             raise DeviceNotFoundError(f"Device {device_id} not found")
@@ -179,16 +191,50 @@ class VivosunClient:
 
         latest = data[-1] if isinstance(data, list) else data
         sensors = SensorData()
-        # GrowHub uses inTemp/inHumi/inVpd, humidifier/heater use pTemp/pHumi/pVpd
-        raw_temp = latest.get("inTemp") or latest.get("pTemp") or latest.get("temp")
+
+        # Primary probe reading: GrowHub=inTemp, humidifier/heater=pTemp
+        raw_temp = latest.get("inTemp")
+        if raw_temp is None:
+            raw_temp = latest.get("pTemp")
         if raw_temp is not None and not is_sentinel(raw_temp):
             sensors.temperature = scale_value(raw_temp)
-        raw_humi = latest.get("inHumi") or latest.get("pHumi") or latest.get("humi")
+
+        raw_humi = latest.get("inHumi")
+        if raw_humi is None:
+            raw_humi = latest.get("pHumi")
         if raw_humi is not None and not is_sentinel(raw_humi):
             sensors.humidity = scale_value(raw_humi)
-        raw_vpd = latest.get("inVpd") or latest.get("pVpd") or latest.get("vpd")
+
+        raw_vpd = latest.get("inVpd")
+        if raw_vpd is None:
+            raw_vpd = latest.get("pVpd")
         if raw_vpd is not None and not is_sentinel(raw_vpd):
             sensors.vpd = scale_value(raw_vpd)
+
+        # Outside sensors (GrowHub controller only)
+        raw = latest.get("outTemp")
+        if raw is not None and not is_sentinel(raw):
+            sensors.outside_temperature = scale_value(raw)
+        raw = latest.get("outHumi")
+        if raw is not None and not is_sentinel(raw):
+            sensors.outside_humidity = scale_value(raw)
+        raw = latest.get("outVpd")
+        if raw is not None and not is_sentinel(raw):
+            sensors.outside_vpd = scale_value(raw)
+
+        # Device hardware
+        raw = latest.get("coreTemp")
+        if raw is not None and not is_sentinel(raw):
+            sensors.core_temperature = scale_value(raw)
+        raw = latest.get("rssi")
+        if raw is not None and not is_sentinel(raw):
+            sensors.rssi = int(raw)
+
+        # Humidifier-specific
+        raw = latest.get("waterLv")
+        if raw is not None and not is_sentinel(raw):
+            sensors.water_level = int(raw)
+
         return sensors
 
     # --- Commands ---
@@ -271,6 +317,70 @@ class VivosunClient:
             raise InvalidParameterError("At least one parameter required")
         await self._publish_desired(device_id, {"dFan": desired})
 
+    async def set_humidifier(
+        self,
+        device_id: str,
+        *,
+        on: bool | None = None,
+        level: int | None = None,
+        mode: int | None = None,
+        target_humidity: float | None = None,
+    ) -> None:
+        """Set humidifier state.
+
+        Args:
+            on: Turn on/off.
+            level: Manual level (0-10). Sets mode to manual (0).
+            mode: 0=manual, 1=auto.
+            target_humidity: Auto mode target humidity (0-100).
+        """
+        desired: dict[str, Any] = {}
+        if on is not None:
+            desired["on"] = int(on)
+        if level is not None:
+            desired["mode"] = 0
+            desired["manu"] = {"lv": clamp_humidifier_level(level)}
+        if mode is not None:
+            desired["mode"] = mode
+        if target_humidity is not None:
+            desired["targetHumi"] = int(target_humidity * 100)
+
+        if not desired:
+            raise InvalidParameterError("At least one parameter required")
+        await self._publish_desired(device_id, {"hmdf": desired})
+
+    async def set_heater(
+        self,
+        device_id: str,
+        *,
+        on: bool | None = None,
+        level: int | None = None,
+        mode: int | None = None,
+        target_temp: float | None = None,
+    ) -> None:
+        """Set heater state.
+
+        Args:
+            on: Turn on/off.
+            level: Manual level (0-10). Sets mode to manual (0).
+            mode: 0=manual, 1=auto.
+            target_temp: Auto mode target temperature (Celsius).
+        """
+        desired: dict[str, Any] = {}
+        if on is not None:
+            desired["on"] = int(on)
+        if level is not None:
+            desired["mode"] = 0
+            desired["manu"] = {"lv": clamp_heater_level(level)}
+        if mode is not None:
+            desired["mode"] = mode
+        if target_temp is not None:
+            desired["targetTemp"] = int(target_temp * 100)
+
+        if not desired:
+            raise InvalidParameterError("At least one parameter required")
+        await self._publish_desired(device_id, {"heat": desired})
+
     async def _publish_desired(
         self, device_id: str, desired: dict[str, Any]
     ) -> None:
@@ -307,13 +417,16 @@ class VivosunClient:
         new_state = parse_shadow_to_state(device_id, payload)
 
         if existing is not None:
-            # Merge: keep existing values for fields not in the update
-            if new_state.sensors.temperature is None:
-                new_state.sensors.temperature = existing.sensors.temperature
-            if new_state.sensors.humidity is None:
-                new_state.sensors.humidity = existing.sensors.humidity
-            if new_state.sensors.vpd is None:
-                new_state.sensors.vpd = existing.sensors.vpd
+            # Merge: keep existing sensor values (sensors come from REST, not MQTT)
+            for attr in (
+                "temperature", "humidity", "vpd",
+                "outside_temperature", "outside_humidity", "outside_vpd",
+                "core_temperature", "rssi", "water_level",
+            ):
+                if getattr(new_state.sensors, attr) is None:
+                    setattr(
+                        new_state.sensors, attr, getattr(existing.sensors, attr)
+                    )
 
         self._states[device_id] = new_state
 

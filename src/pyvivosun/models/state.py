@@ -11,11 +11,24 @@ from ..util import scale_value
 
 @dataclass
 class SensorData:
-    """Sensor readings from a device."""
+    """Sensor readings from a device.
+
+    The primary temperature/humidity/vpd fields hold the probe reading
+    regardless of device type (GrowHub uses inTemp, humidifier/heater use pTemp).
+    """
 
     temperature: float | None = None
     humidity: float | None = None
     vpd: float | None = None
+    # Outside sensors (GrowHub controller only)
+    outside_temperature: float | None = None
+    outside_humidity: float | None = None
+    outside_vpd: float | None = None
+    # Device hardware
+    core_temperature: float | None = None
+    rssi: int | None = None
+    # Humidifier-specific
+    water_level: int | None = None
 
 
 @dataclass
@@ -56,8 +69,9 @@ class HumidifierState:
 
     on: bool = False
     level: int = 0
-    mode: int = 0
+    mode: int = 0  # 0=manual, 1=auto
     water_warning: bool = False
+    target_humidity: float | None = None
 
 
 @dataclass
@@ -66,8 +80,9 @@ class HeaterState:
 
     on: bool = False
     level: int = 0
-    mode: int = 0
-    state: int = 0  # 0=off, 1=heating
+    mode: int = 0  # 0=manual, 1=auto
+    state: int = 0  # 0=idle, 1=heating
+    target_temp: float | None = None
 
 
 @dataclass
@@ -139,6 +154,14 @@ def parse_shadow_to_state(device_id: str, shadow: dict[str, Any]) -> DeviceState
         hmdf.level = hd.get("lv", hd.get("level", 0))
         hmdf.mode = hd.get("mode", 0)
         hmdf.water_warning = bool(hd.get("waterWarn", 0))
+        # Manual level may be nested under manu.lv
+        manu = hd.get("manu")
+        if isinstance(manu, dict) and "lv" in manu and not hmdf.level:
+            hmdf.level = manu["lv"]
+        # Auto mode target humidity
+        raw_target_humi = hd.get("targetHumi")
+        if raw_target_humi is not None:
+            hmdf.target_humidity = scale_value(raw_target_humi)
 
     heater = HeaterState()
     if "heat" in reported:
@@ -147,6 +170,14 @@ def parse_shadow_to_state(device_id: str, shadow: dict[str, Any]) -> DeviceState
         heater.level = htd.get("lv", htd.get("level", 0))
         heater.mode = htd.get("mode", 0)
         heater.state = htd.get("state", 0)
+        # Manual level may be nested under manu.lv
+        manu = htd.get("manu")
+        if isinstance(manu, dict) and "lv" in manu and not heater.level:
+            heater.level = manu["lv"]
+        # Auto mode target temperature
+        raw_target_temp = htd.get("targetTemp")
+        if raw_target_temp is not None:
+            heater.target_temp = scale_value(raw_target_temp)
 
     return DeviceState(
         device_id=device_id,

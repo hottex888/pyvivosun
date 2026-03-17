@@ -9,6 +9,8 @@ from pyvivosun.models import (
     DeviceType,
     DuctFanState,
     EventType,
+    HeaterState,
+    HumidifierState,
     LightState,
     SensorData,
     TokenSet,
@@ -84,6 +86,28 @@ class TestSensorData:
         assert s.temperature is None
         assert s.humidity is None
         assert s.vpd is None
+        assert s.outside_temperature is None
+        assert s.outside_humidity is None
+        assert s.outside_vpd is None
+        assert s.core_temperature is None
+        assert s.rssi is None
+        assert s.water_level is None
+
+    def test_all_fields(self) -> None:
+        s = SensorData(
+            temperature=25.0,
+            humidity=60.0,
+            vpd=1.2,
+            outside_temperature=22.0,
+            outside_humidity=55.0,
+            outside_vpd=1.0,
+            core_temperature=35.0,
+            rssi=-45,
+            water_level=80,
+        )
+        assert s.outside_temperature == 22.0
+        assert s.rssi == -45
+        assert s.water_level == 80
 
 
 class TestLightState:
@@ -104,6 +128,30 @@ class TestDuctFanState:
         dfs = DuctFanState()
         assert dfs.auto_mode is False
         assert dfs.target_temp is None
+
+
+class TestHumidifierState:
+    def test_defaults(self) -> None:
+        hs = HumidifierState()
+        assert hs.on is False
+        assert hs.target_humidity is None
+
+    def test_with_target(self) -> None:
+        hs = HumidifierState(on=True, level=5, mode=1, target_humidity=65.0)
+        assert hs.target_humidity == 65.0
+
+
+class TestHeaterState:
+    def test_defaults(self) -> None:
+        hs = HeaterState()
+        assert hs.on is False
+        assert hs.target_temp is None
+        assert hs.state == 0
+
+    def test_with_target(self) -> None:
+        hs = HeaterState(on=True, level=3, mode=1, state=1, target_temp=28.0)
+        assert hs.target_temp == 28.0
+        assert hs.state == 1
 
 
 class TestEventType:
@@ -200,3 +248,77 @@ class TestParseShadowToState:
         shadow = {"state": {"reported": {"light": {"on": 1}}}}
         state = parse_shadow_to_state("dev1", shadow)
         assert state.raw_shadow == shadow
+
+    def test_humidifier_auto_target(self) -> None:
+        shadow = {
+            "state": {
+                "reported": {
+                    "hmdf": {
+                        "on": 1,
+                        "lv": 5,
+                        "mode": 1,
+                        "waterWarn": 0,
+                        "targetHumi": 6500,
+                    }
+                }
+            }
+        }
+        state = parse_shadow_to_state("dev1", shadow)
+        assert state.humidifier.on is True
+        assert state.humidifier.mode == 1
+        assert state.humidifier.target_humidity == 65.0
+
+    def test_humidifier_manual_nested_level(self) -> None:
+        """Level can be nested under manu.lv when top-level lv is absent."""
+        shadow = {
+            "state": {
+                "reported": {
+                    "hmdf": {"on": 1, "mode": 0, "manu": {"lv": 7}},
+                }
+            }
+        }
+        state = parse_shadow_to_state("dev1", shadow)
+        assert state.humidifier.level == 7
+
+    def test_humidifier_top_level_lv_preferred(self) -> None:
+        """Top-level lv takes precedence over manu.lv."""
+        shadow = {
+            "state": {
+                "reported": {
+                    "hmdf": {"on": 1, "lv": 3, "mode": 0, "manu": {"lv": 7}},
+                }
+            }
+        }
+        state = parse_shadow_to_state("dev1", shadow)
+        assert state.humidifier.level == 3
+
+    def test_heater_auto_target(self) -> None:
+        shadow = {
+            "state": {
+                "reported": {
+                    "heat": {
+                        "on": 1,
+                        "lv": 4,
+                        "mode": 1,
+                        "state": 1,
+                        "targetTemp": 2800,
+                    }
+                }
+            }
+        }
+        state = parse_shadow_to_state("dev1", shadow)
+        assert state.heater.on is True
+        assert state.heater.mode == 1
+        assert state.heater.state == 1
+        assert state.heater.target_temp == 28.0
+
+    def test_heater_manual_nested_level(self) -> None:
+        shadow = {
+            "state": {
+                "reported": {
+                    "heat": {"on": 1, "mode": 0, "state": 0, "manu": {"lv": 6}},
+                }
+            }
+        }
+        state = parse_shadow_to_state("dev1", shadow)
+        assert state.heater.level == 6

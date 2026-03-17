@@ -177,6 +177,60 @@ class TestSensorData:
         with pytest.raises(DeviceNotFoundError):
             await client.get_sensor_data("nonexistent")
 
+    async def test_get_sensor_data_probe_keys(self, client, mock_rest) -> None:
+        """Humidifier/heater use pTemp/pHumi/pVpd."""
+        mock_rest.get_point_log.return_value = [
+            {"pTemp": 2200, "pHumi": 7000, "pVpd": 90, "waterLv": 80}
+        ]
+        await client.connect()
+        data = await client.get_sensor_data("d1")
+        assert data.temperature == 22.0
+        assert data.humidity == 70.0
+        assert data.vpd == 0.9
+        assert data.water_level == 80
+
+    async def test_get_sensor_data_all_fields(self, client, mock_rest) -> None:
+        """GrowHub returns all sensor fields."""
+        mock_rest.get_point_log.return_value = [
+            {
+                "inTemp": 2500,
+                "inHumi": 6000,
+                "inVpd": 120,
+                "outTemp": 2200,
+                "outHumi": 5500,
+                "outVpd": 100,
+                "coreTemp": 3500,
+                "rssi": -45,
+            }
+        ]
+        await client.connect()
+        data = await client.get_sensor_data("d1")
+        assert data.temperature == 25.0
+        assert data.outside_temperature == 22.0
+        assert data.outside_humidity == 55.0
+        assert data.outside_vpd == 1.0
+        assert data.core_temperature == 35.0
+        assert data.rssi == -45
+
+    async def test_get_sensor_data_sentinel_filtered(self, client, mock_rest) -> None:
+        """Sentinel values (-6666) are treated as missing."""
+        mock_rest.get_point_log.return_value = [
+            {"inTemp": -6666, "inHumi": 6000, "outTemp": -6666}
+        ]
+        await client.connect()
+        data = await client.get_sensor_data("d1")
+        assert data.temperature is None
+        assert data.humidity == 60.0
+        assert data.outside_temperature is None
+
+    async def test_get_sensor_data_zero_temp(self, client, mock_rest) -> None:
+        """Zero is a valid reading (0.00), not treated as missing."""
+        mock_rest.get_point_log.return_value = [{"inTemp": 0, "inHumi": 0}]
+        await client.connect()
+        data = await client.get_sensor_data("d1")
+        assert data.temperature == 0.0
+        assert data.humidity == 0.0
+
 
 class TestCommands:
     async def test_set_light(self, client, mock_mqtt) -> None:
@@ -217,6 +271,72 @@ class TestCommands:
         assert desired["on"] == 1
         assert desired["auto"] == 1
         assert desired["targetTemp"] == 2800
+
+    async def test_set_humidifier_on_off(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_humidifier("d1", on=True)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        assert call_args[0][1] == {"hmdf": {"on": 1}}
+
+    async def test_set_humidifier_manual_level(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_humidifier("d1", level=5)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        desired = call_args[0][1]["hmdf"]
+        assert desired["mode"] == 0  # manual
+        assert desired["manu"] == {"lv": 5}
+
+    async def test_set_humidifier_level_clamped(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_humidifier("d1", level=15)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        assert call_args[0][1]["hmdf"]["manu"]["lv"] == 10  # clamped
+
+    async def test_set_humidifier_auto_target(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_humidifier("d1", mode=1, target_humidity=65.0)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        desired = call_args[0][1]["hmdf"]
+        assert desired["mode"] == 1
+        assert desired["targetHumi"] == 6500
+
+    async def test_set_humidifier_no_params(self, client) -> None:
+        await client.connect()
+        with pytest.raises(InvalidParameterError):
+            await client.set_humidifier("d1")
+
+    async def test_set_heater_on_off(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_heater("d1", on=True)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        assert call_args[0][1] == {"heat": {"on": 1}}
+
+    async def test_set_heater_manual_level(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_heater("d1", level=3)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        desired = call_args[0][1]["heat"]
+        assert desired["mode"] == 0
+        assert desired["manu"] == {"lv": 3}
+
+    async def test_set_heater_level_clamped(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_heater("d1", level=-1)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        assert call_args[0][1]["heat"]["manu"]["lv"] == 0  # clamped
+
+    async def test_set_heater_auto_target(self, client, mock_mqtt) -> None:
+        await client.connect()
+        await client.set_heater("d1", mode=1, target_temp=28.0)
+        call_args = mock_mqtt.publish_shadow_update.call_args
+        desired = call_args[0][1]["heat"]
+        assert desired["mode"] == 1
+        assert desired["targetTemp"] == 2800
+
+    async def test_set_heater_no_params(self, client) -> None:
+        await client.connect()
+        with pytest.raises(InvalidParameterError):
+            await client.set_heater("d1")
 
     async def test_command_device_not_found(self, client) -> None:
         await client.connect()

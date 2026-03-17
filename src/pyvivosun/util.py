@@ -2,8 +2,12 @@
 
 from .const import (
     MAX_FAN_LEVEL,
+    MAX_HEATER_LEVEL,
+    MAX_HUMIDIFIER_LEVEL,
     MAX_LIGHT_LEVEL,
     MIN_FAN_LEVEL,
+    MIN_HEATER_LEVEL,
+    MIN_HUMIDIFIER_LEVEL,
     MIN_LIGHT_LEVEL,
     SCALE_DIVISOR,
     SENTINEL_VALUE,
@@ -28,3 +32,13 @@ def clamp_light_level(level: int) -> int:
 def clamp_fan_level(level: int) -> int:
     """Clamp a fan level to the valid range [0, 10]."""
     return max(MIN_FAN_LEVEL, min(MAX_FAN_LEVEL, level))
+
+
+def clamp_humidifier_level(level: int) -> int:
+    """Clamp a humidifier level to the valid range [0, 10]."""
+    return max(MIN_HUMIDIFIER_LEVEL, min(MAX_HUMIDIFIER_LEVEL, level))
+
+
+def clamp_heater_level(level: int) -> int:
+    """Clamp a heater level to the valid range [0, 10]."""
+    return max(MIN_HEATER_LEVEL, min(MAX_HEATER_LEVEL, level))

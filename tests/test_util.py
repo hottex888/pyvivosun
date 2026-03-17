@@ -1,6 +1,13 @@
 """Tests for utility helpers."""
 
-from pyvivosun.util import clamp_fan_level, clamp_light_level, is_sentinel, scale_value
+from pyvivosun.util import (
+    clamp_fan_level,
+    clamp_heater_level,
+    clamp_humidifier_level,
+    clamp_light_level,
+    is_sentinel,
+    scale_value,
+)
 
 
 class TestScaleValue:
@@ -57,3 +64,25 @@ class TestClampFanLevel:
 
     def test_in_range(self) -> None:
         assert clamp_fan_level(5) == 5
+
+
+class TestClampHumidifierLevel:
+    def test_below_min(self) -> None:
+        assert clamp_humidifier_level(-1) == 0
+
+    def test_above_max(self) -> None:
+        assert clamp_humidifier_level(15) == 10
+
+    def test_in_range(self) -> None:
+        assert clamp_humidifier_level(5) == 5
+
+
+class TestClampHeaterLevel:
+    def test_below_min(self) -> None:
+        assert clamp_heater_level(-1) == 0
+
+    def test_above_max(self) -> None:
+        assert clamp_heater_level(15) == 10
+
+    def test_in_range(self) -> None:
+        assert clamp_heater_level(5) == 5
