@@ -1,6 +1,6 @@
 # pyvivosun
 
-Async Python library for the Vivosun GrowHub cloud API. Provides programmatic access to sensor data and device control for Vivosun grow tent equipment.
+Async Python library for the Vivosun GrowHub cloud API plus local GrowCam access over XM/DVRIP. Provides programmatic access to sensor data, device control, and local camera metadata/snapshots for Vivosun grow tent equipment.
 
 Built on the reverse-engineering work by [lientry](https://github.com/lientry/homeassistant-vivosun-growhub), who figured out the authentication flow, API endpoints, MQTT shadow structure, and device control protocol. This library is a clean-room standalone rewrite with no Home Assistant dependencies.
 
@@ -13,7 +13,7 @@ Tested with the following Vivosun devices (each connects independently to the cl
 | GrowHub E42A | Controller | Inside/outside temp, humidity, VPD, core temp, RSSI | Light, circulation fan, duct fan |
 | AeroStream H19 | Humidifier | Probe temp, humidity, VPD, water level, core temp | Humidifier level/mode |
 | AeroFlux W70 | Heater | Probe temp, humidity, VPD | Heater level/mode |
-| GrowCam C4 | Camera | — | — (no MQTT, video only) |
+| GrowCam C4 | Camera | Local network info, storage info, timelapse config, recordings | Local snapshot, recording list, DVRIP config |
 
 ## Installation
 
@@ -117,6 +117,12 @@ Device (WiFi) ──> AWS IoT Core ──> Shadow (control state only)
 - Sends empty heartbeat payloads: `{"msgId": 0, "data": {}, "msgType": 1}`
 - No sensor data observed even with the mobile app actively open
 - Purpose unclear; not useful for integration
+
+**Local camera path — XM/DVRIP (GrowCam only)**
+- GrowCam devices do not expose the same MQTT shadow path as the other Vivosun devices
+- Local camera control uses the XM/DVRIP protocol on TCP port `34567`
+- The library can query camera network/config data, storage info, timelapse settings, snapshots, and SD-card recording lists once a reachable camera IP is known
+- RTSP remains useful for live video, but playback and snapshots use the device's local DVRIP control protocol
 
 ### Why Not aiomqtt?
 

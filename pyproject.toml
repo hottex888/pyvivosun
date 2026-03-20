@@ -5,10 +5,11 @@ build-backend = "hatchling.build"
 [project]
 name = "pyvivosun"
 version = "0.1.0"
-description = "Async Python library for the Vivosun GrowHub cloud API"
+description = "Async Python library for the Vivosun GrowHub cloud API and GrowCam local control"
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.9",
+    "python-dvr>=0.0.1",
     "websockets>=13.0",
 ]
 

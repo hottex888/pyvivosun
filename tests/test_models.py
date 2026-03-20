@@ -4,6 +4,13 @@ from datetime import UTC, datetime
 
 from pyvivosun.models import (
     AwsCredentials,
+    CameraEncodeInfo,
+    CameraEncodeProfile,
+    CameraNetworkInfo,
+    CameraRecording,
+    CameraStorageInfo,
+    CameraStoragePartition,
+    CameraTimelapseConfig,
     CirculationFanState,
     Device,
     DeviceType,
@@ -58,7 +65,10 @@ class TestDevice:
             online=True,
         )
         assert d.online is True
+        assert d.hw_id is None
         assert d.model is None
+        assert d.camera_username is None
+        assert d.camera_password is None
 
     def test_with_model(self) -> None:
         d = Device(
@@ -72,6 +82,23 @@ class TestDevice:
             model="E42A",
         )
         assert d.model == "E42A"
+
+    def test_with_camera_credentials(self) -> None:
+        d = Device(
+            device_id="cam1",
+            client_id="",
+            name="GrowCam C4",
+            device_type=DeviceType.CAMERA,
+            topic_prefix="",
+            scene_id="s1",
+            online=True,
+            hw_id="5a8ddedd3c1e7674",
+            camera_username="abjd",
+            camera_password="4kt5em",
+        )
+        assert d.hw_id == "5a8ddedd3c1e7674"
+        assert d.camera_username == "abjd"
+        assert d.camera_password == "4kt5em"
 
 
 class TestDeviceType:
@@ -108,6 +135,90 @@ class TestSensorData:
         assert s.outside_temperature == 22.0
         assert s.rssi == -45
         assert s.water_level == 80
+
+
+class TestCameraModels:
+    def test_camera_network_info(self) -> None:
+        info = CameraNetworkInfo(
+            wifi_ip="10.0.15.202",
+            common_ip="192.168.1.10",
+            wifi_gateway="10.0.15.1",
+            common_gateway="192.168.1.1",
+            tcp_port=34567,
+            udp_port=34568,
+            http_port=80,
+            ssl_port=8443,
+            ssid="iot.blatz.site",
+            mac="00:12:34:31:78:fe",
+        )
+        assert info.wifi_ip == "10.0.15.202"
+        assert info.tcp_port == 34567
+
+    def test_camera_encode_info(self) -> None:
+        info = CameraEncodeInfo(
+            main=CameraEncodeProfile(
+                codec="H.265",
+                bitrate_kbps=2560,
+                fps=15,
+                resolution="4M",
+                gop=3,
+            ),
+            extra=CameraEncodeProfile(
+                codec="H.265",
+                bitrate_kbps=1024,
+                fps=15,
+                resolution="D1",
+                gop=1,
+            ),
+        )
+        assert info.main is not None
+        assert info.main.resolution == "4M"
+        assert info.extra is not None
+        assert info.extra.bitrate_kbps == 1024
+
+    def test_camera_storage_info(self) -> None:
+        info = CameraStorageInfo(
+            partitions=[
+                CameraStoragePartition(
+                    driver_type=0,
+                    is_current=True,
+                    total_space="0x00002385",
+                    remain_space="0x00000000",
+                    start_time="2026-02-05 05:39:06",
+                    end_time="2026-03-18 03:02:49",
+                )
+            ]
+        )
+        assert len(info.partitions) == 1
+        assert info.partitions[0].driver_type == 0
+
+    def test_camera_timelapse_config(self) -> None:
+        config = CameraTimelapseConfig(
+            enabled=True,
+            interval_seconds=14400,
+            start_time="2025-12-13 18:04:42",
+            end_time="2026-06-01 18:00:56",
+            time_sections=["1 00:00:00-23:59:59"],
+        )
+        assert config.enabled is True
+        assert config.interval_seconds == 14400
+
+    def test_camera_recording(self) -> None:
+        rec = CameraRecording(
+            start_time=datetime(2026, 2, 24, 8, 31, 34),
+            end_time=datetime(2026, 2, 24, 8, 40, 0),
+            file_name="/idea0/2026-02-24/001/08.31.34-08.40.00[R][@10c1][0].h264",
+            length_bytes=151460,
+            disk_no=0,
+            category="regular",
+        )
+        assert rec.category == "regular"
+        assert rec.length_bytes == 151460
+
+
+class TestDeviceTypeEnum:
+    def test_camera_value(self) -> None:
+        assert str(DeviceType.CAMERA) == "camera"
 
 
 class TestLightState:

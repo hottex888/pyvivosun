@@ -8,6 +8,7 @@ import pytest
 
 from pyvivosun.client import VivosunClient, _EventBus
 from pyvivosun.exceptions import DeviceNotFoundError, InvalidParameterError
+from pyvivosun.models import CameraNetworkInfo, RpsStatus
 from pyvivosun.models.device import DeviceType
 from pyvivosun.models.event import EventType, VivosunEvent
 
@@ -61,6 +62,7 @@ def mock_rest():
         rest.get_point_log = AsyncMock(
             return_value=[{"inTemp": 2500, "inHumi": 6000, "inVpd": 120}]
         )
+        rest._ensure_session = AsyncMock(return_value=object())
         rest.close = AsyncMock()
         yield rest
 
@@ -118,6 +120,30 @@ class TestDiscovery:
         await client.connect()
         device = await client.get_device("nonexistent")
         assert device is None
+
+    async def test_discovery_extracts_camera_credentials(
+        self, mock_rest, mock_mqtt
+    ) -> None:
+        mock_rest.get_device_list.return_value = [
+            {
+                "deviceId": "cam1",
+                "clientId": "",
+                "hwId": "5a8ddedd3c1e7674",
+                "name": "GrowCam C4",
+                "topicPrefix": "",
+                "scene": {"sceneId": 108080},
+                "onlineStatus": 1,
+                "setting": {"jf": {"devUser": "abjd", "devPass": "4kt5em"}},
+            },
+        ]
+        client = VivosunClient("user@example.com", "password")
+
+        await client.connect()
+        device = await client.get_device("cam1")
+
+        assert device is not None
+        assert device.camera_username == "abjd"
+        assert device.camera_password == "4kt5em"
 
 
 class TestState:
@@ -230,6 +256,78 @@ class TestSensorData:
         data = await client.get_sensor_data("d1")
         assert data.temperature == 0.0
         assert data.humidity == 0.0
+
+
+class TestCameraSupport:
+    async def test_get_camera_network_info(self, client, mock_rest) -> None:
+        mock_rest.get_device_list.return_value = [
+            {
+                "deviceId": "cam1",
+                "clientId": "",
+                "name": "GrowCam C4",
+                "topicPrefix": "",
+                "scene": {"sceneId": 108080},
+                "onlineStatus": 1,
+                "setting": {"jf": {"devUser": "abjd", "devPass": "4kt5em"}},
+            },
+        ]
+        await client.connect()
+
+        with patch(
+            "pyvivosun.client.fetch_camera_network_info",
+            return_value=CameraNetworkInfo(wifi_ip="10.0.15.202"),
+        ) as fetch_info:
+            info = await client.get_camera_network_info("cam1", camera_ip="10.0.15.202")
+
+        assert info.wifi_ip == "10.0.15.202"
+        fetch_info.assert_called_once_with("10.0.15.202", "abjd", "4kt5em")
+
+    async def test_get_camera_network_info_requires_camera_device(self, client) -> None:
+        await client.connect()
+
+        with pytest.raises(InvalidParameterError):
+            await client.get_camera_network_info("d1", camera_ip="10.0.15.202")
+
+    async def test_get_camera_rps_status(self, client, mock_rest) -> None:
+        mock_rest.get_device_list.return_value = [
+            {
+                "deviceId": "cam1",
+                "clientId": "",
+                "name": "GrowCam C4",
+                "topicPrefix": "",
+                "scene": {"sceneId": 108080},
+                "onlineStatus": 1,
+                "setting": {"jf": {"devUser": "abjd", "devPass": "4kt5em"}},
+            },
+        ]
+        await client.connect()
+
+        with patch(
+            "pyvivosun.client.query_rps_status",
+            new=AsyncMock(
+                side_effect=[
+                    None,
+                    RpsStatus(
+                        serial_number="5a8ddedd3c1e7674",
+                        status="Online",
+                        device_type="Camera",
+                        server_ip="3.73.2.109",
+                        server_port=6510,
+                        device_port=34567,
+                        wan_ip="78.94.212.194",
+                        kcp_enabled=False,
+                    ),
+                ]
+            ),
+        ) as query_status:
+            status = await client.get_camera_rps_status(
+                "cam1",
+                auth_codes=("aaaaaaaa103122aded", "aaaaaaaa-13122aded"),
+            )
+
+        assert status is not None
+        assert status.server_ip == "3.73.2.109"
+        assert query_status.await_count == 2
 
 
 class TestCommands:

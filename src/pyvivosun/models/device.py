@@ -30,4 +30,7 @@ class Device:
     topic_prefix: str
     scene_id: str
     online: bool
+    hw_id: str | None = None
     model: str | None = None
+    camera_username: str | None = None
+    camera_password: str | None = None

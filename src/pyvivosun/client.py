@@ -5,18 +5,36 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import Any
 
 import aiohttp
 
 from .auth import AuthManager
+from .camera import (
+    fetch_camera_encode_info,
+    fetch_camera_network_info,
+    fetch_camera_snapshot,
+    fetch_camera_storage_info,
+    fetch_camera_timelapse_config,
+    list_camera_recordings,
+)
 from .const import NATURAL_WIND_VALUE
 from .exceptions import DeviceNotFoundError, InvalidParameterError
+from .models.camera import (
+    CameraEncodeInfo,
+    CameraNetworkInfo,
+    CameraRecording,
+    CameraStorageInfo,
+    CameraTimelapseConfig,
+)
 from .models.device import Device, DeviceType
 from .models.event import EventType, VivosunEvent
+from .models.rps import RpsStatus
 from .models.state import DeviceState, SensorData, parse_shadow_to_state
 from .mqtt import MqttClient
 from .rest import RestClient
+from .rps import RPS_STATUS_PORTS, query_rps_status
 from .util import (
     clamp_fan_level,
     clamp_heater_level,
@@ -130,7 +148,10 @@ class VivosunClient:
                 topic_prefix=raw.get("topicPrefix", ""),
                 scene_id=str(scene_id),
                 online=online,
+                hw_id=raw.get("hwId"),
                 model=raw.get("model"),
+                camera_username=self._camera_field(raw, "devUser"),
+                camera_password=self._camera_field(raw, "devPass"),
             )
             self._devices[device_id] = device
             if client_id:
@@ -236,6 +257,95 @@ class VivosunClient:
             sensors.water_level = int(raw)
 
         return sensors
+
+    async def get_camera_network_info(
+        self, device_id: str, *, camera_ip: str
+    ) -> CameraNetworkInfo:
+        """Fetch local network information for a camera device."""
+        username, password = self._camera_credentials(device_id)
+        return await asyncio.to_thread(
+            fetch_camera_network_info, camera_ip, username, password
+        )
+
+    async def get_camera_encode_info(
+        self, device_id: str, *, camera_ip: str
+    ) -> CameraEncodeInfo:
+        """Fetch local encode profile information for a camera device."""
+        username, password = self._camera_credentials(device_id)
+        return await asyncio.to_thread(
+            fetch_camera_encode_info, camera_ip, username, password
+        )
+
+    async def get_camera_storage_info(
+        self, device_id: str, *, camera_ip: str
+    ) -> CameraStorageInfo:
+        """Fetch local storage information for a camera device."""
+        username, password = self._camera_credentials(device_id)
+        return await asyncio.to_thread(
+            fetch_camera_storage_info, camera_ip, username, password
+        )
+
+    async def get_camera_timelapse_config(
+        self, device_id: str, *, camera_ip: str
+    ) -> CameraTimelapseConfig | None:
+        """Fetch local timelapse configuration for a camera device."""
+        username, password = self._camera_credentials(device_id)
+        return await asyncio.to_thread(
+            fetch_camera_timelapse_config, camera_ip, username, password
+        )
+
+    async def get_camera_snapshot(self, device_id: str, *, camera_ip: str) -> bytes:
+        """Fetch a local JPEG snapshot for a camera device."""
+        username, password = self._camera_credentials(device_id)
+        return await asyncio.to_thread(
+            fetch_camera_snapshot, camera_ip, username, password
+        )
+
+    async def list_camera_recordings(
+        self,
+        device_id: str,
+        *,
+        camera_ip: str,
+        start_time: datetime,
+        end_time: datetime,
+        event: str = "*",
+    ) -> list[CameraRecording]:
+        """List local recordings for a camera device."""
+        username, password = self._camera_credentials(device_id)
+        return await asyncio.to_thread(
+            list_camera_recordings,
+            camera_ip,
+            username,
+            password,
+            start_time=start_time,
+            end_time=end_time,
+            event=event,
+        )
+
+    async def get_camera_rps_status(
+        self,
+        device_id: str,
+        *,
+        auth_codes: tuple[str, ...],
+    ) -> RpsStatus | None:
+        """Query the experimental RPS status service for a camera device."""
+        device = self._devices.get(device_id)
+        if device is None:
+            raise DeviceNotFoundError(f"Device {device_id} not found")
+        if device.device_type is not DeviceType.CAMERA:
+            raise InvalidParameterError(f"Device {device_id} is not a camera")
+
+        for auth_code in auth_codes:
+            for port in RPS_STATUS_PORTS:
+                status = await query_rps_status(
+                    await self._rest._ensure_session(),
+                    serial_number=device.hw_id or device.device_id,
+                    auth_code=auth_code,
+                    port=port,
+                )
+                if status is not None:
+                    return status
+        return None
 
     # --- Commands ---
 
@@ -380,6 +490,31 @@ class VivosunClient:
         if not desired:
             raise InvalidParameterError("At least one parameter required")
         await self._publish_desired(device_id, {"heat": desired})
+
+    def _camera_credentials(self, device_id: str) -> tuple[str, str]:
+        """Return cached local camera credentials for a camera device."""
+        device = self._devices.get(device_id)
+        if device is None:
+            raise DeviceNotFoundError(f"Device {device_id} not found")
+        if device.device_type is not DeviceType.CAMERA:
+            raise InvalidParameterError(f"Device {device_id} is not a camera")
+        if not device.camera_username or not device.camera_password:
+            raise InvalidParameterError(
+                f"Device {device_id} does not expose local camera credentials"
+            )
+        return device.camera_username, device.camera_password
+
+    @staticmethod
+    def _camera_field(raw: dict[str, Any], field: str) -> str | None:
+        """Extract a value from setting.jf if present."""
+        setting = raw.get("setting")
+        if not isinstance(setting, dict):
+            return None
+        jf = setting.get("jf")
+        if not isinstance(jf, dict):
+            return None
+        value = jf.get(field)
+        return value if isinstance(value, str) and value else None
 
     async def _publish_desired(
         self, device_id: str, desired: dict[str, Any]
