@@ -7,6 +7,13 @@ LOGIN_ENDPOINT = "/user/login"
 DEVICE_LIST_ENDPOINT = "/iot/device/getTotalList"
 AWS_IDENTITY_ENDPOINT = "/iot/user/awsIdentity"
 POINT_LOG_ENDPOINT = "/iot/data/getPointLog"
+PLAN_LIST_ENDPOINT = "/iot/plan/getList"
+
+# Production app protocol headers. Protected POST bodies use the Android app's
+# request envelope; see RestClient._request.
+API_PROTOCOL_VERSION = "1.0.5"
+APP_VERSION = "4.63.1"
+SERVER_PLATFORM = "android"
 
 # Cognito
 COGNITO_REGION = "us-east-2"

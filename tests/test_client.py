@@ -144,6 +144,7 @@ class TestDiscovery:
         assert device is not None
         assert device.camera_username == "abjd"
         assert device.camera_password == "4kt5em"
+        mock_mqtt.connect.assert_not_awaited()
 
 
 class TestState:

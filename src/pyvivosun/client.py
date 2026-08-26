@@ -108,7 +108,8 @@ class VivosunClient:
         await self._auth.ensure_authenticated()
         await self._discover_devices()
 
-        client_ids = [d.client_id for d in self._devices.values()]
+        # Cameras and REST-only devices may not have AWS IoT shadow identities.
+        client_ids = [d.client_id for d in self._devices.values() if d.client_id]
         if client_ids:
             await self._mqtt.connect(client_ids)
             await self._auth.start_credential_refresh()
