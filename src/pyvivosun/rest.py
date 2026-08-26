@@ -2,22 +2,70 @@
 
 from __future__ import annotations
 
+import hashlib
+import json as json_module
+import secrets
+import string
+import time
 import uuid
 from typing import Any, cast
 
 import aiohttp
 
 from .const import (
+    API_PROTOCOL_VERSION,
+    APP_VERSION,
     AWS_IDENTITY_ENDPOINT,
     BASE_URL,
     COGNITO_URL,
     DEVICE_LIST_ENDPOINT,
     LOGIN_ENDPOINT,
+    PLAN_LIST_ENDPOINT,
     POINT_LOG_ENDPOINT,
     REQUEST_TIMEOUT,
+    SERVER_PLATFORM,
     SP_APP_ID,
 )
 from .exceptions import ApiError, AuthenticationError
+
+_REQUEST_ALPHABET = string.ascii_uppercase + string.ascii_lowercase + string.digits
+_AES_KEY_LENGTHS = (16, 24, 32)
+_IV_LENGTH = 16
+
+
+def _encrypt_protected_body(
+    plaintext: bytes, *, timestamp_ms: int
+) -> tuple[str, str, bytes]:
+    """Return the current Android-app envelope for authenticated POST bodies.
+
+    The request code tells the service how to derive the per-request AES-CBC
+    key and IV. It contains no credential material.
+    """
+    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    from cryptography.hazmat.primitives.padding import PKCS7
+
+    timestamp_text = str(timestamp_ms)
+    timestamp_digest = hashlib.md5(timestamp_text.encode()).hexdigest()  # noqa: S324
+    key_length = secrets.choice(_AES_KEY_LENGTHS)
+    key_start = secrets.randbelow(len(timestamp_digest) - key_length + 1)
+    key_end = key_start + key_length
+    key = timestamp_digest[key_start:key_end].encode()
+
+    salt_length = _IV_LENGTH + secrets.randbelow(84)
+    salt = "".join(secrets.choice(_REQUEST_ALPHABET) for _ in range(salt_length))
+    iv_start = secrets.randbelow(salt_length - _IV_LENGTH + 1)
+    iv_end = iv_start + _IV_LENGTH
+    iv = salt[iv_start:iv_end].encode()
+
+    padder = PKCS7(algorithms.AES.block_size).padder()
+    padded = padder.update(plaintext) + padder.finalize()
+    encryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()
+    ciphertext = encryptor.update(padded) + encryptor.finalize()
+    request_code = f"AC5-{key_start}-{key_end}-{iv_start}-{iv_end}-{salt}"
+    body = json_module.dumps(
+        {"content": ciphertext.hex()}, separators=(",", ":")
+    ).encode()
+    return timestamp_text, request_code, body
 
 
 class RestClient:
@@ -49,9 +97,25 @@ class RestClient:
         url = f"{BASE_URL}{endpoint}"
         timeout = aiohttp.ClientTimeout(total=REQUEST_TIMEOUT)
 
-        kwargs: dict[str, Any] = {"headers": headers, "timeout": timeout}
+        request_headers = {
+            "Server-Platform": SERVER_PLATFORM,
+            "Api-Version": API_PROTOCOL_VERSION,
+            "App-Version": APP_VERSION,
+        }
+        if headers:
+            request_headers.update(headers)
+
+        kwargs: dict[str, Any] = {"headers": request_headers, "timeout": timeout}
         if json is not None:
-            kwargs["json"] = json
+            body = json_module.dumps(json, separators=(",", ":")).encode()
+            if method.upper() == "POST" and endpoint != LOGIN_ENDPOINT:
+                request_time, request_code, body = _encrypt_protected_body(
+                    body, timestamp_ms=int(time.time() * 1000)
+                )
+                request_headers["Request-Time"] = request_time
+                request_headers["Request-Code"] = request_code
+            request_headers["Content-Type"] = "application/json"
+            kwargs["data"] = body
 
         async with session.request(method, url, **kwargs) as resp:
             data: dict[str, Any] = await resp.json()
@@ -186,4 +250,16 @@ class RestClient:
         return cast(
             list[dict[str, Any]],
             result.get("iotDataLogList", result.get("list", [])),
+        )
+
+    async def get_plan_list(
+        self, headers: dict[str, str], scene_id: int
+    ) -> dict[str, Any]:
+        """Fetch recipe/plan definitions for one Vivosun scene.
+
+        This is a read-only REST request. Device control remains exclusively on
+        the AWS IoT shadow transport.
+        """
+        return await self._request(
+            "POST", PLAN_LIST_ENDPOINT, json={"sceneId": scene_id}, headers=headers
         )

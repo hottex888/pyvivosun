@@ -1,12 +1,18 @@
 """Tests for REST client."""
 
+import hashlib
+import json
+from unittest.mock import AsyncMock
+
 import aiohttp
 import pytest
 from aioresponses import aioresponses
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.padding import PKCS7
 
 from pyvivosun.const import BASE_URL, COGNITO_URL
 from pyvivosun.exceptions import ApiError, AuthenticationError
-from pyvivosun.rest import RestClient
+from pyvivosun.rest import RestClient, _encrypt_protected_body
 
 
 @pytest.fixture
@@ -140,6 +146,47 @@ class TestGetPointLog:
         result = await rest_client.get_point_log(headers, "d1", 66078)
         assert len(result) == 1
         assert result[0]["inTemp"] == 2500
+
+
+class TestGetPlanList:
+    async def test_sends_scene_id_to_read_only_plan_endpoint(
+        self, rest_client
+    ) -> None:
+        rest_client._request = AsyncMock(  # type: ignore[method-assign]
+            return_value={"iotUserPlanList": []}
+        )
+        headers = {"login-token": "lt", "access-token": "at"}
+
+        result = await rest_client.get_plan_list(headers, 66078)
+
+        assert result == {"iotUserPlanList": []}
+        rest_client._request.assert_awaited_once_with(
+            "POST",
+            "/iot/plan/getList",
+            json={"sceneId": 66078},
+            headers=headers,
+        )
+
+
+class TestProtectedRequestEnvelope:
+    def test_round_trips_authenticated_post_body(self) -> None:
+        plaintext = b'{"sceneId":66078}'
+        timestamp, request_code, body = _encrypt_protected_body(
+            plaintext, timestamp_ms=1724620000123
+        )
+
+        _prefix, key_start, key_end, iv_start, iv_end, salt = request_code.split(
+            "-", maxsplit=5
+        )
+        digest = hashlib.md5(timestamp.encode()).hexdigest()  # noqa: S324
+        key = digest[int(key_start) : int(key_end)].encode()
+        iv = salt[int(iv_start) : int(iv_end)].encode()
+        ciphertext = bytes.fromhex(json.loads(body)["content"])
+        decryptor = Cipher(algorithms.AES(key), modes.CBC(iv)).decryptor()
+        padded = decryptor.update(ciphertext) + decryptor.finalize()
+        unpadder = PKCS7(algorithms.AES.block_size).unpadder()
+
+        assert unpadder.update(padded) + unpadder.finalize() == plaintext
 
 
 class TestApiError:

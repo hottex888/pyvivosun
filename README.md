@@ -163,8 +163,13 @@ https://api-prod.next.vivosun.com
 | GET | `/iot/device/getTotalList` | Yes | List all devices |
 | POST | `/iot/user/awsIdentity` | Yes | Get AWS IoT Cognito identity |
 | POST | `/iot/data/getPointLog` | Yes | Fetch historical sensor data |
+| POST | `/iot/plan/getList` | Yes | Fetch read-only scene recipe/plan definitions |
 
 Auth headers on protected endpoints: `login-token`, `access-token`
+
+Protected REST POST bodies use the current Android-app request envelope. The
+library handles it automatically; callers should not log authenticated request
+headers or bodies.
 
 ### Point Log — Time Levels
 
